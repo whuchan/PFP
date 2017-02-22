@@ -23,5 +23,8 @@
     <ClInclude Include="Classes\Common.h">
       <Filter>ソース ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="Classes\d3dx12.h">
+      <Filter>ソース ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
