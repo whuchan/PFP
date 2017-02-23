@@ -13,10 +13,25 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Data">
+      <UniqueIdentifier>{8ca72aca-8e39-462e-82a5-7c4a90c6d163}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Data\GameObject">
+      <UniqueIdentifier>{8aa09559-3dd2-4ce6-a8e5-f9d1847b9a8e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Data\GameObject\3DObject">
+      <UniqueIdentifier>{e2ccc381-7ee5-4d2b-baaa-2c4c8cef8c45}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Data\GameObject\2DObject">
+      <UniqueIdentifier>{b89630c4-cf68-4bf4-bb6f-ce125d98ab7a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Classes\Main.cpp">
       <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Classes\Data\GameObject\GameObject.cpp">
+      <Filter>Data\GameObject</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -25,6 +40,9 @@
     </ClInclude>
     <ClInclude Include="Classes\d3dx12.h">
       <Filter>ソース ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Classes\Data\GameObject\GameObject.h">
+      <Filter>Data\GameObject</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
