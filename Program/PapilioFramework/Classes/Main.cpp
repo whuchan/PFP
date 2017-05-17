@@ -15,8 +15,14 @@
 #include "d3dx12.h"
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#include <d3dcompiler.h>
+#include <DirectXMath.h>
 
-
+//-------------------------------------------------------------------------
+// 名前空間
+//-------------------------------------------------------------------------
+using Microsoft::WRL::ComPtr;
+using namespace DirectX;
 
 
 //-------------------------------------------------------------------------
@@ -26,14 +32,15 @@
 #pragma comment(lib,"dxgi.lib")
 #pragma comment(lib,"d3dcompiler.lib")
 
+//-------------------------------------------------------------------------
+// 変数宣言
+//-------------------------------------------------------------------------
 const wchar_t windowClassName[] = L"PapilioFramework";
 const wchar_t windowTitle[]		= L"PapilioFramework";
 const int clientWidth = 800;
 const int clientHeight = 600;
 HWND hwnd = nullptr;
 
-
-using Microsoft::WRL::ComPtr;
 //フレームバッファの数 / ダブルバッファを設定
 static const int frameBufferCount = 2;
 //DirectXデバイス
@@ -57,13 +64,71 @@ int currentFrameIndex;
 int rtvDescriptorSize;
 //WARPデバイスかどうか true...WARPデバイス false...WARPデバイスでない
 bool warp;
+
+ComPtr<ID3D12RootSignature> rootSignature;
+ComPtr<ID3D12PipelineState> pso;
+ComPtr<ID3D12Resource> vertexBuffer;
+D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+D3D12_VIEWPORT viewport;
+D3D12_RECT scissorRect;
+
+
+//-------------------------------------------------------------------------
+// 関数宣言
+//-------------------------------------------------------------------------
 bool InitializeD3D();
 void FinalizeD3D();
 bool Render();
 bool WaitForPreviousFrame();
 bool WaitForGpu();
 
+bool LoadShader(const wchar_t*, const char*, ID3DBlob**);
+bool CreatePSO();
+bool CreateVertexBuffer();
+void DrawTriangle();
 
+
+//-------------------------------------------------------------------------
+// 頂点データ構造
+//-------------------------------------------------------------------------
+//頂点データ型
+struct Vertex
+{
+	XMFLOAT3 position;	//座標
+	XMFLOAT4 color;		//色
+};
+
+//頂点データのインップットレイアウト
+const D3D12_INPUT_ELEMENT_DESC vertexLayout[] = { 
+		{	
+			"POSITION",
+			0,
+			DXGI_FORMAT_R32G32B32_FLOAT,
+			0,
+			0,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+		
+		{
+			"COLOR",
+			0,
+			DXGI_FORMAT_R32G32B32A32_FLOAT,
+			0,
+			12,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		} };
+
+//-------------------------------------------------------------------------
+// データ
+//-------------------------------------------------------------------------
+//頂点データ
+const Vertex vertices[] = {
+	{ XMFLOAT3(0.0f,0.5f,0.5f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
+	{ XMFLOAT3(0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,1.0f,0.0f,1.0f) },
+	{ XMFLOAT3(-0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
+};
 
 //-------------------------------------------------------------------------
 // ウィンドウプロシージャ宣言
@@ -347,6 +412,29 @@ bool InitializeD3D(void)
 		OutputDebugString(L"Failed Create FenceEvent");
 		return false;
 	}
+
+	if (!CreatePSO())
+	{
+		return false;
+	}
+
+	if (!CreateVertexBuffer())
+	{
+		return false;
+	}
+
+	//ビューポートを設定する
+	viewport.TopLeftX	= 0;
+	viewport.TopLeftY	= 0;
+	viewport.Width		= clientWidth;
+	viewport.Height		= clientHeight;
+	viewport.MinDepth	= 0.0f;
+	viewport.MaxDepth	= 1.0f;
+
+	scissorRect.left	= 0;
+	scissorRect.top		= 0;
+	scissorRect.right	= clientWidth;
+	scissorRect.bottom	= clientHeight;
 	
 
 	return true;
@@ -405,6 +493,12 @@ bool Render(void)
 	const float clearColor[] = { 0.0f, 0.0f, 1.0f, 1.0f };
 	commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 	
+
+
+	DrawTriangle();
+
+
+
 	//命令：フレームバッファが表示状態になるまで命令の実行を止める
 	commandList->ResourceBarrier(	1,
 									&CD3DX12_RESOURCE_BARRIER::Transition(renderTargetList[currentFrameIndex].Get(),
@@ -482,4 +576,164 @@ bool WaitForGpu(void)
 	++fenceValue[currentFrameIndex];
 	return true;
 }
+
+/**
+* @desc シェーダを読み込む
+* @param シェーダファイルパス
+* @param 頂点シェーダなら"vs_5_0",ピクセルシェーダなら"ps_5_0"
+* @param シェーダを格納するID3DBlobインターフェイスのポインタ
+*/
+bool LoadShader(const wchar_t* filename,
+				const char* target,
+				ID3DBlob** blob)
+{
+	ComPtr<ID3DBlob> errorBuffer;
+	if (FAILED(D3DCompileFromFile(	filename,
+									nullptr,
+									nullptr,
+									"main",
+									target,
+									D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
+									0,
+									blob,
+									&errorBuffer)))
+	{
+		if (errorBuffer)
+		{
+			OutputDebugStringA(
+				static_cast<char*>(errorBuffer->GetBufferPointer()));
+		}
+		return false;
+	}
+	return true;
+}
+
+/**
+* @desc ルートシグネチャとPSOを作成する
+*/
+bool CreatePSO()
+{
+	ComPtr<ID3DBlob> vertexShaderBlob;
+	if (!LoadShader(L"Resources/VertexShader.hlsl", "vs_5_0", &vertexShaderBlob))
+	{
+		return false;
+	}
+
+	ComPtr<ID3DBlob> pixelShaderBlob;
+	if (!LoadShader(L"Resources/PixelShader.hlsl", "ps_5_0", &pixelShaderBlob))
+	{
+		return false;
+	}
+
+	D3D12_ROOT_SIGNATURE_DESC rsDesc = {
+		0,
+		nullptr,
+		0,
+		nullptr,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+	};
+
+	ComPtr<ID3DBlob> signatureBlob;
+	if (FAILED(D3D12SerializeRootSignature(&rsDesc,
+		D3D_ROOT_SIGNATURE_VERSION_1_0,
+		&signatureBlob,
+		nullptr)))
+	{
+		return false;
+	}
+
+	if (FAILED(device->CreateRootSignature(
+		0,
+		signatureBlob->GetBufferPointer(),
+		signatureBlob->GetBufferSize(),
+		IID_PPV_ARGS(&rootSignature))))
+	{
+		return false;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = rootSignature.Get();
+	psoDesc.VS = {
+		vertexShaderBlob->GetBufferPointer(),
+		vertexShaderBlob->GetBufferSize()
+	};
+
+	psoDesc.PS = {
+		pixelShaderBlob->GetBufferPointer(),
+		pixelShaderBlob->GetBufferSize()
+	};
+
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.SampleMask = 0xffffffff;
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.InputLayout.pInputElementDescs = vertexLayout;
+	psoDesc.InputLayout.NumElements = sizeof(vertexLayout) / sizeof(D3D12_INPUT_ELEMENT_DESC);
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.SampleDesc.Count = 1;
+	
+	if (warp)
+	{
+		psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_TOOL_DEBUG;
+	}
+
+	if (FAILED(device->CreateGraphicsPipelineState(&psoDesc,
+			IID_PPV_ARGS(&pso))))
+	{
+		return false;
+	}
+	return true;
+}
+
+/**
+* @desc 頂点バッファを作成する
+*/
+bool CreateVertexBuffer(void)
+{
+	//頂点バッファを作成する
+	if (FAILED(device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices)),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&vertexBuffer))))
+	{
+		return false;
+	}
+	vertexBuffer->SetName(L"Vertex buffer");
+
+	//頂点バッファに頂点データをコピーする
+	void* pVertexDataBegin;
+	const D3D12_RANGE readRange = { 0,0 };
+	if (FAILED(vertexBuffer->Map(0, &readRange, &pVertexDataBegin)))
+	{
+		return false;
+	}
+	memcpy(pVertexDataBegin,vertices,sizeof(vertices));
+	vertexBuffer->Unmap(0,nullptr);
+
+	//頂点バッファビューを作成する
+	vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+	vertexBufferView.StrideInBytes	= sizeof(Vertex);
+	vertexBufferView.SizeInBytes	= sizeof(vertices);
+
+	return true;
+}
+
+/**
+* 三角形を描画する
+*/
+void DrawTriangle()
+{
+	commandList->SetPipelineState(pso.Get());
+	commandList->SetGraphicsRootSignature(rootSignature.Get());
+	commandList->RSSetViewports(1, &viewport);
+	commandList->RSSetScissorRects(1,&scissorRect);
+	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	commandList->IASetVertexBuffers(0,1,&vertexBufferView);
+	commandList->DrawInstanced(_countof(vertices),1,0,0);
+}
+
 //EOF

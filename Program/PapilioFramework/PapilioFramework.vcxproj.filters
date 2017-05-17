@@ -51,4 +51,12 @@
       <Filter>Data\GameObject\3DObject</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Resources\VertexShader.hlsl">
+      <Filter>リソース ファイル</Filter>
+    </FxCompile>
+    <FxCompile Include="Resources\PixelShader.hlsl">
+      <Filter>リソース ファイル</Filter>
+    </FxCompile>
+  </ItemGroup>
 </Project>
