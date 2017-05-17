@@ -49,10 +49,13 @@ ComPtr<ID3D12Device> device;
 ComPtr<IDXGISwapChain3> swapChain;
 //コマンドキュー
 ComPtr<ID3D12CommandQueue> commandQueue;
+
 ComPtr<ID3D12DescriptorHeap> rtvDescriptorHeap;
-ComPtr<ID3D12DescriptorHeap> dsvDescriptorHeap;
 ComPtr<ID3D12Resource> renderTargetList[frameBufferCount];
+
+ComPtr<ID3D12DescriptorHeap> dsvDescriptorHeap;
 ComPtr<ID3D12Resource> depthStencilBuffer;
+
 ComPtr<ID3D12CommandAllocator> commandAllocator[frameBufferCount];
 ComPtr<ID3D12GraphicsCommandList> commandList;
 ComPtr<ID3D12Fence> fence[frameBufferCount];
@@ -67,8 +70,13 @@ bool warp;
 
 ComPtr<ID3D12RootSignature> rootSignature;
 ComPtr<ID3D12PipelineState> pso;
+
 ComPtr<ID3D12Resource> vertexBuffer;
 D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+
+ComPtr<ID3D12Resource> indexBuffer;
+D3D12_INDEX_BUFFER_VIEW indexBufferView;
+
 D3D12_VIEWPORT viewport;
 D3D12_RECT scissorRect;
 
@@ -85,7 +93,9 @@ bool WaitForGpu();
 bool LoadShader(const wchar_t*, const char*, ID3DBlob**);
 bool CreatePSO();
 bool CreateVertexBuffer();
+bool CreateIndexBuffer();
 void DrawTriangle();
+void DrawRectangles();
 
 
 //-------------------------------------------------------------------------
@@ -125,10 +135,32 @@ const D3D12_INPUT_ELEMENT_DESC vertexLayout[] = {
 //-------------------------------------------------------------------------
 //頂点データ
 const Vertex vertices[] = {
+	
+	//三角型用
 	{ XMFLOAT3(0.0f,0.5f,0.5f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
 	{ XMFLOAT3(0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,1.0f,0.0f,1.0f) },
 	{ XMFLOAT3(-0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
+
+	//四角形用
+	{ XMFLOAT3(-0.3f,0.4f,0.4f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
+	{ XMFLOAT3(0.2f,0.4f,0.4f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
+	{ XMFLOAT3(0.2f,-0.1f,0.4f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
+	{ XMFLOAT3(-0.3f,-0.1f,0.4f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
+	
+	{ XMFLOAT3(-0.2f,0.1f,0.6f),XMFLOAT4(1.0f,1.0f,0.0f,1.0f) },
+	{ XMFLOAT3(0.3f,0.1f,0.6f),XMFLOAT4(1.0f,1.0f,0.0f,1.0f) },
+	{ XMFLOAT3(0.3f,-0.4f,0.6f),XMFLOAT4(1.0f,0.0f,1.0f,1.0f) },
+	{ XMFLOAT3(-0.2f,-0.4f,0.6f),XMFLOAT4(1.0f,0.0f,1.0f,1.0f) },
 };
+
+//インデックスデータも追加します
+const uint32_t indices[] = {
+	0,1,2,2,3,0,
+	4,5,6,6,7,4,
+};
+
+//三角形の描画で使う頂点データの数を定義します
+const UINT triangleVertexCount = 3;
 
 //-------------------------------------------------------------------------
 // ウィンドウプロシージャ宣言
@@ -362,6 +394,50 @@ bool InitializeD3D(void)
 		rtvHandle.ptr += rtvDescriptorSize;
 	}
 
+	//深度バッファを作成する
+	//深度バッファ用の２Dテクスチャの作成
+	D3D12_CLEAR_VALUE dsClearValue = {};
+	dsClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+	dsClearValue.DepthStencil.Depth		= 1.0f;
+	dsClearValue.DepthStencil.Stencil	= 0;
+	if (FAILED(device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT,
+			clientWidth,
+			clientHeight,
+			1,
+			0,
+			1,
+			0,
+			D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
+		D3D12_RESOURCE_STATE_DEPTH_WRITE,
+		&dsClearValue,
+		IID_PPV_ARGS(&depthStencilBuffer))))
+	{
+		return false;
+	}
+
+	//深度バッファ用デスクリプタヒープを作成する
+	D3D12_DESCRIPTOR_HEAP_DESC dsvDesc = {};
+	dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsvDesc.NumDescriptors = 1;
+	dsvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	if (FAILED(device->CreateDescriptorHeap(
+		&dsvDesc,
+		IID_PPV_ARGS(&dsvDescriptorHeap))))
+	{
+		return false;
+	}
+
+	//深度バッファ用デスクリプタを作成する
+	D3D12_DEPTH_STENCIL_VIEW_DESC depthStencilDesc = {};
+	depthStencilDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	depthStencilDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	device->CreateDepthStencilView(	depthStencilBuffer.Get(),
+									&depthStencilDesc,
+									dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+
 	//コマンドアロケータを作成する
 	for (int i = 0; i < frameBufferCount; ++i)
 	{ 
@@ -419,6 +495,11 @@ bool InitializeD3D(void)
 	}
 
 	if (!CreateVertexBuffer())
+	{
+		return false;
+	}
+
+	if (!CreateIndexBuffer())
 	{
 		return false;
 	}
@@ -482,22 +563,25 @@ bool Render(void)
 	
 	//命令：描画するフレームバッファを指定する
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	
+	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	
 	//N番目の要素のアドレス=デスクリプタヒープの先頭アドレス+(要素のバイト数*N)
 	rtvHandle.ptr += rtvDescriptorSize * currentFrameIndex;
 	commandList->OMSetRenderTargets(1,			//レンダーターゲット用のデスクリプタの数
 									&rtvHandle,
-									FALSE,		//デスクリプタの格納状態
-									nullptr);	//ステンシルバッファ用のデスクリプタのアドレス
+									FALSE,			//デスクリプタの格納状態
+									&dsvHandle);	//ステンシルバッファ用のデスクリプタのアドレス
 	
 	//命令：色を指定して塗りつぶす
 	const float clearColor[] = { 0.0f, 0.0f, 1.0f, 1.0f };
 	commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-	
+	commandList->ClearDepthStencilView(dsvHandle,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
 
 
 	DrawTriangle();
 
-
+	DrawRectangles();
 
 	//命令：フレームバッファが表示状態になるまで命令の実行を止める
 	commandList->ResourceBarrier(	1,
@@ -672,6 +756,8 @@ bool CreatePSO()
 	psoDesc.NumRenderTargets = 1;
 	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
 	psoDesc.SampleDesc.Count = 1;
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	
 	if (warp)
 	{
@@ -723,6 +809,43 @@ bool CreateVertexBuffer(void)
 }
 
 /**
+* @desc インデックスバッファを作成する
+*/
+bool CreateIndexBuffer(void)
+{
+	//インデックスバッファを作成する
+	if (FAILED(device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices)),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&indexBuffer))))
+	{
+		return false;
+	}
+	indexBuffer->SetName(L"Index buffer");
+
+	//インデックスバッファにインデックスデータをコピーする
+	void* pIndexDataBegin;
+	const D3D12_RANGE readRange = {0,0};
+	if (FAILED(indexBuffer->Map(0, &readRange, &pIndexDataBegin)))
+	{
+		return false;
+	}
+	memcpy(pIndexDataBegin, indices, sizeof(indices));
+	indexBuffer->Unmap(0,nullptr);
+
+	//インデックスバッファビューを作成する
+	indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+	indexBufferView.Format = DXGI_FORMAT_R32_UINT;
+	indexBufferView.SizeInBytes = sizeof(indices);
+
+	return true;
+}
+
+
+/**
 * 三角形を描画する
 */
 void DrawTriangle()
@@ -732,8 +855,19 @@ void DrawTriangle()
 	commandList->RSSetViewports(1, &viewport);
 	commandList->RSSetScissorRects(1,&scissorRect);
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	
+	
 	commandList->IASetVertexBuffers(0,1,&vertexBufferView);
-	commandList->DrawInstanced(_countof(vertices),1,0,0);
+	commandList->DrawInstanced(triangleVertexCount,1,0,0);
+}
+
+/**
+* @desc 四角形を描画する
+*/
+void DrawRectangles()
+{
+	commandList->IASetIndexBuffer(&indexBufferView);
+	commandList->DrawIndexedInstanced(_countof(indices),1,0,triangleVertexCount,0);
 }
 
 //EOF
