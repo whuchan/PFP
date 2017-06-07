@@ -18,6 +18,8 @@
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
 
+#include "../Resources/Texture.h"
+
 //-------------------------------------------------------------------------
 // 名前空間
 //-------------------------------------------------------------------------
@@ -56,11 +58,17 @@ ComPtr<ID3D12Resource> renderTargetList[frameBufferCount];
 ComPtr<ID3D12DescriptorHeap> dsvDescriptorHeap;
 ComPtr<ID3D12Resource> depthStencilBuffer;
 
+ComPtr<ID3D12DescriptorHeap> csuDescriptorHeap;
+Texture texCircle;
+Texture texImage;
+
 ComPtr<ID3D12CommandAllocator> commandAllocator[frameBufferCount];
 ComPtr<ID3D12GraphicsCommandList> commandList;
 ComPtr<ID3D12Fence> fence[frameBufferCount];
 HANDLE fenceEvent;
 UINT64 fenceValue[frameBufferCount];
+UINT64 masterFenceValue;
+
 //現在の描画中のフレームバッファ
 int currentFrameIndex;
 //レンダーターゲットビューデスクリプタのバイト数
@@ -94,6 +102,10 @@ bool LoadShader(const wchar_t*, const char*, ID3DBlob**);
 bool CreatePSO();
 bool CreateVertexBuffer();
 bool CreateIndexBuffer();
+
+bool LoadTexture();
+bool CreateCircleTexture(TextureLoader& loader);
+
 void DrawTriangle();
 void DrawRectangles();
 
@@ -106,6 +118,7 @@ struct Vertex
 {
 	XMFLOAT3 position;	//座標
 	XMFLOAT4 color;		//色
+	XMFLOAT2 texcoord;  // テクスチャ座標
 };
 
 //頂点データのインップットレイアウト
@@ -128,7 +141,19 @@ const D3D12_INPUT_ELEMENT_DESC vertexLayout[] = {
 			12,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
 			0
-		} };
+		},
+
+		{
+			"TEXCOORD",
+			0,
+			DXGI_FORMAT_R32G32_FLOAT,
+			0,
+			28,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+			0
+		},
+
+};
 
 //-------------------------------------------------------------------------
 // データ
@@ -136,21 +161,20 @@ const D3D12_INPUT_ELEMENT_DESC vertexLayout[] = {
 //頂点データ
 const Vertex vertices[] = {
 	
-	//三角型用
-	{ XMFLOAT3(0.0f,0.5f,0.5f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
-	{ XMFLOAT3(0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,1.0f,0.0f,1.0f) },
-	{ XMFLOAT3(-0.5f,-0.5f,0.5f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
+	// 三角形の頂点データ.                                               
+	{ XMFLOAT3(0.0f, 0.5f, 0.5f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.5f, 0.0f) },
+	{ XMFLOAT3(0.5f,-0.5f, 0.5f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-0.5f,-0.5f, 0.5f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
 
-	//四角形用
-	{ XMFLOAT3(-0.3f,0.4f,0.4f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
-	{ XMFLOAT3(0.2f,0.4f,0.4f),XMFLOAT4(1.0f,0.0f,0.0f,1.0f) },
-	{ XMFLOAT3(0.2f,-0.1f,0.4f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
-	{ XMFLOAT3(-0.3f,-0.1f,0.4f),XMFLOAT4(0.0f,0.0f,1.0f,1.0f) },
-	
-	{ XMFLOAT3(-0.2f,0.1f,0.6f),XMFLOAT4(1.0f,1.0f,0.0f,1.0f) },
-	{ XMFLOAT3(0.3f,0.1f,0.6f),XMFLOAT4(1.0f,1.0f,0.0f,1.0f) },
-	{ XMFLOAT3(0.3f,-0.4f,0.6f),XMFLOAT4(1.0f,0.0f,1.0f,1.0f) },
-	{ XMFLOAT3(-0.2f,-0.4f,0.6f),XMFLOAT4(1.0f,0.0f,1.0f,1.0f) },
+	// 四角形の頂点データ.                                              
+	{ XMFLOAT3(-0.3f, 0.4f, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
+	{ XMFLOAT3(0.2f, 0.4f, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
+	{ XMFLOAT3(0.2f,-0.1f, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-0.3f,-0.1f, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
+	{ XMFLOAT3(-0.2f, 0.1f, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
+	{ XMFLOAT3(0.3f, 0.1f, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
+	{ XMFLOAT3(0.3f,-0.4f, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-0.2f,-0.4f, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
 };
 
 //インデックスデータも追加します
@@ -180,6 +204,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparan);
 */
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int intCmdShow)
 {	
+	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
 	//作成するウィンドウの設定
 	WNDCLASSEX wc = {};
 	wc.cbSize = sizeof(WNDCLASSEX);
@@ -243,6 +269,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int intCmdShow)
 	//Direct3D終了
 	FinalizeD3D();
 
+
+	CoUninitialize();
+
 	return 0; 
 }
 
@@ -277,6 +306,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 */
 bool InitializeD3D(void)
 { 
+#ifndef NDEBUG
+	{
+		ComPtr<ID3D12Debug> debugController;
+		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+		{
+			debugController->EnableDebugLayer();
+		}
+	}
+#endif
+
 	//DXGIファクトリを作成する
 	ComPtr<IDXGIFactory4> dxgiFactory;
 	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory))))
@@ -438,6 +477,18 @@ bool InitializeD3D(void)
 									&depthStencilDesc,
 									dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
+
+	//テクスチャ
+	D3D12_DESCRIPTOR_HEAP_DESC csuDesc = {};
+	csuDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	csuDesc.NumDescriptors = 1024;
+	csuDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	if (FAILED(device->CreateDescriptorHeap(&csuDesc, IID_PPV_ARGS(&csuDescriptorHeap))))
+	{
+		return false;
+	}
+
+
 	//コマンドアロケータを作成する
 	for (int i = 0; i < frameBufferCount; ++i)
 	{ 
@@ -477,6 +528,7 @@ bool InitializeD3D(void)
 	{ 
 		fenceValue[i] = 0; 
 	}
+	masterFenceValue = 1;
 
 	//フェンスイベントを作成する
 	fenceEvent = CreateEvent(	nullptr,	//子プロセスから見えなくする
@@ -501,6 +553,10 @@ bool InitializeD3D(void)
 
 	if (!CreateIndexBuffer())
 	{
+		return false;
+	}
+
+	if (!LoadTexture()) {
 		return false;
 	}
 
@@ -578,6 +634,10 @@ bool Render(void)
 	commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 	commandList->ClearDepthStencilView(dsvHandle,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
 
+	//テクスチャをシェーダから読めるようにする
+	ID3D12DescriptorHeap* heapList[] = { csuDescriptorHeap.Get() };
+	commandList->SetDescriptorHeaps(_countof(heapList), heapList);
+
 
 	DrawTriangle();
 
@@ -610,11 +670,13 @@ bool Render(void)
 	}
 
 	//コマンドリストの命令の終了をGPUからCPUに知らせる
+	fenceValue[currentFrameIndex] = masterFenceValue;
 	if (FAILED(commandQueue->Signal(fence->Get(), fenceValue[currentFrameIndex])))
 	{ 
 		OutputDebugString(L"Failed Close CommandList");
 		return false;
 	}
+	++masterFenceValue;
 
 	return true;
 }
@@ -625,9 +687,8 @@ bool Render(void)
 */
 bool WaitForPreviousFrame(void)
 { 
-	currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
-	
-	if (fence->Get()->GetCompletedValue()< fenceValue[currentFrameIndex])
+	if(fenceValue[currentFrameIndex]&&
+		fence->Get()->GetCompletedValue() < fenceValue[currentFrameIndex])
 	{ 
 		if (FAILED(fence->Get()->SetEventOnCompletion(fenceValue[currentFrameIndex], fenceEvent)))
 		{
@@ -636,7 +697,8 @@ bool WaitForPreviousFrame(void)
 		WaitForSingleObject(fenceEvent, INFINITE);
 	}
 	
-	++fenceValue[currentFrameIndex];
+	currentFrameIndex = swapChain->GetCurrentBackBufferIndex();
+
 	return true;
 }
 
@@ -646,18 +708,21 @@ bool WaitForPreviousFrame(void)
 */
 bool WaitForGpu(void)
 {
+	const UINT64 currentFenceValue = masterFenceValue;
+
 	if (FAILED(commandQueue->Signal(fence->Get(),
-									fenceValue[currentFrameIndex])))
+									currentFenceValue)))
 	{
 		return false;
 	}
+
+	++masterFenceValue;
 	
-	if (FAILED(fence->Get()->SetEventOnCompletion(fenceValue[currentFrameIndex], fenceEvent)))
+	if (FAILED(fence->Get()->SetEventOnCompletion(currentFenceValue, fenceEvent)))
 	{ 
 		return false;
 	}
 	WaitForSingleObject(fenceEvent, INFINITE);
-	++fenceValue[currentFrameIndex];
 	return true;
 }
 
@@ -697,23 +762,31 @@ bool LoadShader(const wchar_t* filename,
 */
 bool CreatePSO()
 {
+	// 頂点シェーダを作成.
 	ComPtr<ID3DBlob> vertexShaderBlob;
 	if (!LoadShader(L"Resources/VertexShader.hlsl", "vs_5_0", &vertexShaderBlob))
 	{
 		return false;
 	}
 
+	// ピクセルシェーダを作成.
 	ComPtr<ID3DBlob> pixelShaderBlob;
 	if (!LoadShader(L"Resources/PixelShader.hlsl", "ps_5_0", &pixelShaderBlob))
 	{
 		return false;
 	}
 
+	// ルートシグネチャを作成.
+	D3D12_DESCRIPTOR_RANGE descRange[] = { CD3DX12_DESCRIPTOR_RANGE(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0) };
+	CD3DX12_ROOT_PARAMETER rootParameters[2];
+	rootParameters[0].InitAsConstants(16, 0, 0);
+	rootParameters[1].InitAsDescriptorTable(_countof(descRange), descRange);
+	D3D12_STATIC_SAMPLER_DESC staticSampler[] = { CD3DX12_STATIC_SAMPLER_DESC(0) };
 	D3D12_ROOT_SIGNATURE_DESC rsDesc = {
-		0,
-		nullptr,
-		0,
-		nullptr,
+		_countof(rootParameters),
+		rootParameters,
+		_countof(staticSampler),
+		staticSampler,
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
 	};
 
@@ -750,15 +823,15 @@ bool CreatePSO()
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.SampleMask = 0xffffffff;
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	psoDesc.InputLayout.pInputElementDescs = vertexLayout;
 	psoDesc.InputLayout.NumElements = sizeof(vertexLayout) / sizeof(D3D12_INPUT_ELEMENT_DESC);
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.SampleDesc.Count = 1;
 	psoDesc.NumRenderTargets = 1;
 	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-	psoDesc.SampleDesc.Count = 1;
-	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
-	
+	psoDesc.SampleDesc = { 1, 0 };
 	if (warp)
 	{
 		psoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_TOOL_DEBUG;
@@ -852,6 +925,9 @@ void DrawTriangle()
 {
 	commandList->SetPipelineState(pso.Get());
 	commandList->SetGraphicsRootSignature(rootSignature.Get());
+	
+	commandList->SetGraphicsRootDescriptorTable(1, texCircle.handle);
+
 	commandList->RSSetViewports(1, &viewport);
 	commandList->RSSetScissorRects(1,&scissorRect);
 	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -866,8 +942,76 @@ void DrawTriangle()
 */
 void DrawRectangles()
 {
+	commandList->SetGraphicsRootDescriptorTable(1, texImage.handle);
 	commandList->IASetIndexBuffer(&indexBufferView);
 	commandList->DrawIndexedInstanced(_countof(indices),1,0,triangleVertexCount,0);
+}
+
+/**
+*　テクスチャを読み込む
+*/
+bool LoadTexture()
+{
+	TextureLoader loader;
+	if (!loader.Begin(csuDescriptorHeap))
+	{
+		return false;
+	}
+
+	if (!loader.LoadFromFile(texImage, 1, L"Resources/UnknownPlanet.png"))
+	{
+		return false;
+	}
+
+	if (!CreateCircleTexture(loader))
+	{
+		return false;
+	}
+
+	
+
+	ID3D12CommandList* ppCommandLists[] = {
+		loader.End()
+	};
+
+	commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+
+	WaitForGpu();
+
+	return true;
+}
+
+/**
+* テクスチャを作成する.
+*
+* @param loader 作成に使用するテクスチャローダーオブジェクト.
+*
+* @reval  true  作成成功.
+* @retval false 作成失敗.
+*/
+bool CreateCircleTexture(TextureLoader& loader)
+{
+	const D3D12_RESOURCE_DESC desc =
+		CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, 256, 256, 1, 1);
+	std::vector<uint8_t> image;
+	image.resize(static_cast<size_t>(desc.Width * desc.Height) * 4);
+	uint8_t* p = image.data();
+	for (float y = 0; y < desc.Height; ++y) 
+	{
+		const float fy = (y / (desc.Height - 1) * 2.0f) - 1.0f;
+		
+		for (float x = 0; x < desc.Width; ++x) 
+		{
+			const float fx = (x / (desc.Width - 1) * 2.0f) - 1.0f;
+			const float distance = std::sqrt(fx * fx + fy * fy);
+			const float t = 0.02f / std::abs(0.1f - std::fmod(distance, 0.2f));
+			const uint8_t col = t < 1.0f ? static_cast<uint8_t>(t * 255.0f) : 255;
+			p[0] = p[1] = p[2] = col;
+			p[3] = 255;
+			p += 4;
+		}
+	}
+	return loader.Create(texCircle, 0, desc, image.data(), L"texCircle");
 }
 
 //EOF

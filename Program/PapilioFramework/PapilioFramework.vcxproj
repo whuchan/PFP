@@ -153,12 +153,14 @@
     <ClCompile Include="Classes\Data\GameObject\3DObject\3DObject.cpp" />
     <ClCompile Include="Classes\Data\GameObject\GameObject.cpp" />
     <ClCompile Include="Classes\Main.cpp" />
+    <ClCompile Include="Resources\Texture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Classes\Common.h" />
     <ClInclude Include="Classes\d3dx12.h" />
     <ClInclude Include="Classes\Data\GameObject\3DObject\3DObject.h" />
     <ClInclude Include="Classes\Data\GameObject\GameObject.h" />
+    <ClInclude Include="Resources\Texture.h" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Resources\PixelShader.hlsl">

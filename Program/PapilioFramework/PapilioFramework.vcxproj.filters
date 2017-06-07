@@ -36,6 +36,9 @@
     <ClCompile Include="Classes\Data\GameObject\3DObject\3DObject.cpp">
       <Filter>Data\GameObject\3DObject</Filter>
     </ClCompile>
+    <ClCompile Include="Resources\Texture.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Classes\Common.h">
@@ -49,6 +52,9 @@
     </ClInclude>
     <ClInclude Include="Classes\Data\GameObject\3DObject\3DObject.h">
       <Filter>Data\GameObject\3DObject</Filter>
+    </ClInclude>
+    <ClInclude Include="Resources\Texture.h">
+      <Filter>ソース ファイル</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
