@@ -76,8 +76,26 @@ int rtvDescriptorSize;
 //WARPデバイスかどうか true...WARPデバイス false...WARPデバイスでない
 bool warp;
 
-ComPtr<ID3D12RootSignature> rootSignature;
-ComPtr<ID3D12PipelineState> pso;
+
+/**
+* ルートシグネチャとPSPをまとめた構造体
+*/
+struct PSO
+{
+	ComPtr<ID3D12RootSignature> rootSignature;
+	ComPtr<ID3D12PipelineState> pso;
+};
+std::vector<PSO> psoList;
+
+/**
+* PSOの種類
+*/
+enum PSOType
+{
+	PSOType_Simple,
+	PSOType_NoiseTexture,
+	countof_PSOType
+};
 
 ComPtr<ID3D12Resource> vertexBuffer;
 D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
@@ -87,7 +105,7 @@ D3D12_INDEX_BUFFER_VIEW indexBufferView;
 
 D3D12_VIEWPORT viewport;
 D3D12_RECT scissorRect;
-
+XMFLOAT4X4 matViewProjection;
 
 //-------------------------------------------------------------------------
 // 関数宣言
@@ -99,7 +117,8 @@ bool WaitForPreviousFrame();
 bool WaitForGpu();
 
 bool LoadShader(const wchar_t*, const char*, ID3DBlob**);
-bool CreatePSO();
+bool CreatePSOList();
+bool CreatePSO(PSO& pso,const wchar_t* vs, const wchar_t* ps);
 bool CreateVertexBuffer();
 bool CreateIndexBuffer();
 
@@ -162,19 +181,20 @@ const D3D12_INPUT_ELEMENT_DESC vertexLayout[] = {
 const Vertex vertices[] = {
 	
 	// 三角形の頂点データ.                                               
-	{ XMFLOAT3(0.0f, 0.5f, 0.5f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.5f, 0.0f) },
-	{ XMFLOAT3(0.5f,-0.5f, 0.5f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
-	{ XMFLOAT3(-0.5f,-0.5f, 0.5f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
+	{ XMFLOAT3(0, 150, 0.5f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.5f, 0.0f) },
+	{ XMFLOAT3(200,-150, 0.5f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-200,-150, 0.5f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
 
 	// 四角形の頂点データ.                                              
-	{ XMFLOAT3(-0.3f, 0.4f, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
-	{ XMFLOAT3(0.2f, 0.4f, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
-	{ XMFLOAT3(0.2f,-0.1f, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
-	{ XMFLOAT3(-0.3f,-0.1f, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
-	{ XMFLOAT3(-0.2f, 0.1f, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
-	{ XMFLOAT3(0.3f, 0.1f, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
-	{ XMFLOAT3(0.3f,-0.4f, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
-	{ XMFLOAT3(-0.2f,-0.4f, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
+	{ XMFLOAT3(-120, 120, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
+	{ XMFLOAT3(80, 120, 0.4f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
+	{ XMFLOAT3(80, -30, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-120, -30, 0.4f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) },
+	
+	{ XMFLOAT3(-80,  30, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(0.0f, 0.0f) },
+	{ XMFLOAT3(120,  30, 0.6f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT2(1.0f, 0.0f) },
+	{ XMFLOAT3(120,-120, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(1.0f, 1.0f) },
+	{ XMFLOAT3(-80,-120, 0.6f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT2(0.0f, 1.0f) }, 
 };
 
 //インデックスデータも追加します
@@ -478,7 +498,7 @@ bool InitializeD3D(void)
 									dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
 
-	//テクスチャ
+	// CBV/SRV/UAV用のデスクリプタヒープを作成.
 	D3D12_DESCRIPTOR_HEAP_DESC csuDesc = {};
 	csuDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	csuDesc.NumDescriptors = 1024;
@@ -524,12 +544,7 @@ bool InitializeD3D(void)
 		return false; 
 	}
 
-	for (int i = 0; i < frameBufferCount; ++i) 
-	{ 
-		fenceValue[i] = 0; 
-	}
-	masterFenceValue = 1;
-
+	
 	//フェンスイベントを作成する
 	fenceEvent = CreateEvent(	nullptr,	//子プロセスから見えなくする
 								FALSE,
@@ -541,7 +556,14 @@ bool InitializeD3D(void)
 		return false;
 	}
 
-	if (!CreatePSO())
+	for (int i = 0; i < frameBufferCount; ++i)
+	{
+		fenceValue[i] = 0;
+	}
+	masterFenceValue = 1;
+
+
+	if (!CreatePSOList())
 	{
 		return false;
 	}
@@ -573,6 +595,13 @@ bool InitializeD3D(void)
 	scissorRect.right	= clientWidth;
 	scissorRect.bottom	= clientHeight;
 	
+
+	const XMMATRIX matOrtho = XMMatrixOrthographicLH(	static_cast<float>(clientWidth),
+														static_cast<float>(clientHeight),
+														1.0f,
+														1000.0f);
+
+	XMStoreFloat4x4(&matViewProjection,matOrtho);
 
 	return true;
 }
@@ -630,7 +659,7 @@ bool Render(void)
 									&dsvHandle);	//ステンシルバッファ用のデスクリプタのアドレス
 	
 	//命令：色を指定して塗りつぶす
-	const float clearColor[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+	const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
 	commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 	commandList->ClearDepthStencilView(dsvHandle,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
 
@@ -759,19 +788,24 @@ bool LoadShader(const wchar_t* filename,
 
 /**
 * @desc ルートシグネチャとPSOを作成する
+* @param pso 作成するPSOオブジェクト
+* @param vs 作成するPSOに設定する頂点シェーダファイル名
+* @param ps 作成するPSOに設定するピクセルシェーダファイル名
+* @retval true 作成成功
+* @retval false 作成失敗
 */
-bool CreatePSO()
+bool CreatePSO(PSO& pso,const wchar_t* vs,const wchar_t* ps)
 {
 	// 頂点シェーダを作成.
 	ComPtr<ID3DBlob> vertexShaderBlob;
-	if (!LoadShader(L"Resources/VertexShader.hlsl", "vs_5_0", &vertexShaderBlob))
+	if (!LoadShader(vs, "vs_5_0", &vertexShaderBlob))
 	{
 		return false;
 	}
 
 	// ピクセルシェーダを作成.
 	ComPtr<ID3DBlob> pixelShaderBlob;
-	if (!LoadShader(L"Resources/PixelShader.hlsl", "ps_5_0", &pixelShaderBlob))
+	if (!LoadShader(ps, "ps_5_0", &pixelShaderBlob))
 	{
 		return false;
 	}
@@ -779,8 +813,8 @@ bool CreatePSO()
 	// ルートシグネチャを作成.
 	D3D12_DESCRIPTOR_RANGE descRange[] = { CD3DX12_DESCRIPTOR_RANGE(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0) };
 	CD3DX12_ROOT_PARAMETER rootParameters[2];
-	rootParameters[0].InitAsConstants(16, 0, 0);
-	rootParameters[1].InitAsDescriptorTable(_countof(descRange), descRange);
+	rootParameters[0].InitAsDescriptorTable(_countof(descRange), descRange);
+	rootParameters[1].InitAsConstants(16, 0);
 	D3D12_STATIC_SAMPLER_DESC staticSampler[] = { CD3DX12_STATIC_SAMPLER_DESC(0) };
 	D3D12_ROOT_SIGNATURE_DESC rsDesc = {
 		_countof(rootParameters),
@@ -803,13 +837,18 @@ bool CreatePSO()
 		0,
 		signatureBlob->GetBufferPointer(),
 		signatureBlob->GetBufferSize(),
-		IID_PPV_ARGS(&rootSignature))))
+		IID_PPV_ARGS(&pso.rootSignature))))
 	{
 		return false;
 	}
 
+
+
+	// パイプラインステートオブジェクト(PSO)を作成.
+	// PSOは、レンダリングパイプラインの状態を素早く、一括して変更できるように導入された.
+	// PSOによって、多くのステートに対してそれぞれ状態変更コマンドを送らずとも、単にPSOを切り替えるコマンドを送るだけで済む.
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-	psoDesc.pRootSignature = rootSignature.Get();
+	psoDesc.pRootSignature = pso.rootSignature.Get();
 	psoDesc.VS = {
 		vertexShaderBlob->GetBufferPointer(),
 		vertexShaderBlob->GetBufferSize()
@@ -838,10 +877,31 @@ bool CreatePSO()
 	}
 
 	if (FAILED(device->CreateGraphicsPipelineState(&psoDesc,
-			IID_PPV_ARGS(&pso))))
+			IID_PPV_ARGS(&pso.pso))))
 	{
 		return false;
 	}
+	return true;
+}
+
+/**
+* @desc PSOを作成する
+*/
+bool CreatePSOList()
+{
+	psoList.resize(countof_PSOType);
+	if (!CreatePSO(psoList[PSOType_Simple],L"Resources/VertexShader.hlsl", L"Resources/PixelShader.hlsl"))
+	{
+		return false;
+	}
+
+	
+	if (!CreatePSO(psoList[PSOType_NoiseTexture], L"Resources/VertexShader.hlsl", L"Resources/NoiseTexture.hlsl"))
+	{
+		return false;
+	}
+
+
 	return true;
 }
 
@@ -923,10 +983,15 @@ bool CreateIndexBuffer(void)
 */
 void DrawTriangle()
 {
-	commandList->SetPipelineState(pso.Get());
-	commandList->SetGraphicsRootSignature(rootSignature.Get());
+	PSO& pso = psoList[PSOType_Simple];
+
+	commandList->SetPipelineState(pso.pso.Get());
+	commandList->SetGraphicsRootSignature(pso.rootSignature.Get());
 	
-	commandList->SetGraphicsRootDescriptorTable(1, texCircle.handle);
+	commandList->SetGraphicsRootDescriptorTable(0, texCircle.handle);
+
+	//コマンドリストにルート定数を追加する
+	commandList->SetGraphicsRoot32BitConstants(1,16,&matViewProjection,0);
 
 	commandList->RSSetViewports(1, &viewport);
 	commandList->RSSetScissorRects(1,&scissorRect);
@@ -942,7 +1007,17 @@ void DrawTriangle()
 */
 void DrawRectangles()
 {
-	commandList->SetGraphicsRootDescriptorTable(1, texImage.handle);
+	PSO& pso = psoList[PSOType_NoiseTexture];
+	commandList->SetPipelineState(pso.pso.Get());
+	commandList->SetGraphicsRootSignature(pso.rootSignature.Get());
+	commandList->SetGraphicsRoot32BitConstants(1,16,&matViewProjection,0);
+	commandList->RSSetViewports(1,&viewport);
+	commandList->RSSetScissorRects(1,&scissorRect);
+	commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	commandList->IASetVertexBuffers(0,1,&vertexBufferView);
+	
+
+	commandList->SetGraphicsRootDescriptorTable(0, texImage.handle);
 	commandList->IASetIndexBuffer(&indexBufferView);
 	commandList->DrawIndexedInstanced(_countof(indices),1,0,triangleVertexCount,0);
 }
